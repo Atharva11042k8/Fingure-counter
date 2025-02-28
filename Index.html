@@ -1,164 +1,165 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Finger Counter</title>
+    <title>Gesture Volume Control</title>
     <style>
-        body {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            background-color: #1a1a1a;
-            color: white;
-            font-family: Arial, sans-serif;
+        * {
             margin: 0;
-            padding: 20px;
+            padding: 0;
+            box-sizing: border-box;
         }
-        #video {
+
+        body {
+            background: #000;
+            overflow: hidden;
+            position: relative;
+        }
+
+        #video-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #video, #canvas {
             transform: scaleX(-1);
-            border-radius: 10px;
-            margin: 20px;
-            background: #333;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
         }
-        #result {
-            font-size: 48px;
-            margin: 20px;
-            padding: 20px;
-            background: #444;
+
+        #volume-display {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #fff;
+            padding: 15px 25px;
             border-radius: 10px;
-        }
-        #error {
-            color: #ff4444;
-            margin: 20px;
-            text-align: center;
-            max-width: 600px;
+            font-size: 24px;
+            font-family: Arial, sans-serif;
+            z-index: 1000;
         }
     </style>
 </head>
 <body>
-    <h1>show fingure 🖕</h1>
-    <div id="error"></div>
-    <video id="video" width="640" height="480"></video>
-    <div id="result">0</div>
+    <div id="video-container">
+        <video id="video"></video>
+        <canvas id="canvas"></canvas>
+    </div>
+    <div id="volume-display">Volume: 0%</div>
 
-    <!-- TensorFlow.js and Handpose Model -->
+    <!-- Add your audio URL here -->
+    <audio id="background-audio" loop>
+        <source src="aaa.mp3" type="audio/mpeg">
+    </audio>
+
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.18.0/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose@0.0.7/dist/handpose.min.js"></script>
 
     <script>
-        // Global variables
-        let model = null;
-        let videoStream = null;
+        let model, video, canvas, ctx;
+        const audioElement = document.getElementById('background-audio');
+        let volumeHistory = [];
+        const maxVolumeDistance = 150; // Adjust based on arm length
 
-        async function initializeApp() {
+        async function initialize() {
             try {
-                // Initialize TensorFlow.js
-                await tf.setBackend('webgl');
-                await tf.ready();
+                [model, video] = await Promise.all([
+                    handpose.load(),
+                    setupCamera()
+                ]);
                 
-                // Load handpose model
-                model = await handpose.load({
-                    runtime: 'tfjs',
-                    modelType: 'full',
-                    maxHands: 2
+                canvas = document.getElementById('canvas');
+                ctx = canvas.getContext('2d');
+                resizeCanvas();
+                window.addEventListener('resize', resizeCanvas);
+                
+                // Start audio after user interaction
+                document.body.addEventListener('click', () => {
+                    audioElement.play().catch(() => {});
                 });
                 
-                // Setup camera
-                const video = await setupCamera();
-                
-                // Start detection loop
-                detectionLoop(video);
+                detectHands();
             } catch (error) {
-                showError(`Initialization failed: ${error.message}`);
+                console.error('Initialization error:', error);
             }
         }
 
         async function setupCamera() {
-            try {
-                const video = document.getElementById('video');
-                videoStream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        facingMode: 'user',
-                        width: { ideal: 640 },
-                        height: { ideal: 480 }
-                    },
-                    audio: false
-                });
-                
-                video.srcObject = videoStream;
-                
-                return new Promise((resolve) => {
-                    video.onloadedmetadata = () => {
-                        video.play();
-                        resolve(video);
-                    };
-                });
-            } catch (error) {
-                showError(`Camera error: ${error.message}`);
-                throw error;
-            }
+            const video = document.getElementById('video');
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user', width: 640, height: 480 }
+            });
+            video.srcObject = stream;
+            await new Promise(resolve => video.onloadedmetadata = resolve);
+            video.play();
+            return video;
         }
 
-        async function detectionLoop(video) {
-            try {
-                const hands = await model.estimateHands(video);
-                processDetection(hands);
-            } catch (error) {
-                showError(`Detection error: ${error.message}`);
-            }
-            
-            requestAnimationFrame(() => detectionLoop(video));
+        function resizeCanvas() {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
         }
 
-        function processDetection(hands) {
-            const resultDiv = document.getElementById('result');
+        async function detectHands() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
             
+            const hands = await model.estimateHands(video);
             if (hands.length > 0) {
                 const landmarks = hands[0].landmarks;
-                const fingerCount = countFingers(landmarks);
-                resultDiv.textContent = fingerCount;
-            } else {
-                resultDiv.textContent = '0';
+                updateVolume(calculateVolume(landmarks));
+                drawLandmarks(landmarks);
             }
+            
+            requestAnimationFrame(detectHands);
         }
 
-        function countFingers(landmarks) {
-            let count = 0;
+        function calculateVolume(landmarks) {
+            const thumbTip = landmarks[4];
+            const indexTip = landmarks[8];
             
-            // Thumb detection (compare tip to base)
-            if (landmarks[4][0] < landmarks[0][0]) count++;
+            const distance = Math.hypot(
+                thumbTip[0] - indexTip[0],
+                thumbTip[1] - indexTip[1]
+            );
             
-            // Other fingers (compare tip to PIP joint)
-            const fingerJoints = [
-                [8, 6],  // Index
-                [12, 10], // Middle
-                [16, 14], // Ring
-                [20, 18]  // Pinky
-            ];
+            let volume = Math.min(distance / maxVolumeDistance, 1);
+            volume = Math.max(volume, 0);
             
-            fingerJoints.forEach(([tip, pip]) => {
-                if (landmarks[tip][1] < landmarks[pip][1]) count++;
+            volumeHistory.push(volume);
+            if (volumeHistory.length > 5) volumeHistory.shift();
+            return volumeHistory.reduce((a, b) => a + b) / volumeHistory.length;
+        }
+
+        function updateVolume(volume) {
+            audioElement.volume = volume;
+            document.getElementById('volume-display').textContent = 
+                `Volume: ${Math.round(volume * 100)}%`;
+        }
+
+        function drawLandmarks(landmarks) {
+            ctx.fillStyle = '#00ff00';
+            landmarks.forEach(point => {
+                ctx.beginPath();
+                ctx.arc(point[0], point[1], 4, 0, Math.PI * 2);
+                ctx.fill();
             });
-
-            return Math.min(count, 5); // Max 5 fingers
         }
 
-        function showError(message) {
-            const errorDiv = document.getElementById('error');
-            errorDiv.textContent = message;
-            console.error(message);
-        }
-
-        // Cleanup on window close
         window.addEventListener('beforeunload', () => {
-            if (videoStream) {
-                videoStream.getTracks().forEach(track => track.stop());
-            }
+            video.srcObject.getTracks().forEach(track => track.stop());
         });
 
-        // Start the application
-        initializeApp();
+        initialize();
     </script>
 </body>
 </html>
