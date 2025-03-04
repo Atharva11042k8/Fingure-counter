@@ -70,7 +70,7 @@
         const audioElement = document.getElementById('background-audio');
         let volumeHistory = [];
         const maxVolumeDistance = 150; // Adjust based on arm length
-
+alert("use hand to conttole volume")
         async function initialize() {
             try {
                 [model, video] = await Promise.all([
@@ -84,7 +84,7 @@
                 window.addEventListener('resize', resizeCanvas);
                 
                 // Start audio after user interaction
-                document.body.addEventListener('click', () => {
+                document.body.addEventListener('', () => {
                     audioElement.play().catch(() => {});
                 });
                 
@@ -101,6 +101,7 @@
             });
             video.srcObject = stream;
             await new Promise(resolve => video.onloadedmetadata = resolve);
+            audioElement.play()
             video.play();
             return video;
         }
@@ -158,7 +159,6 @@
         window.addEventListener('beforeunload', () => {
             video.srcObject.getTracks().forEach(track => track.stop());
         });
-
         initialize();
     </script>
 </body>
